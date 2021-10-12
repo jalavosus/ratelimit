@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/jalavosus/ratelimit"
+	"github.com/stoicturtle/ratelimit"
 )
 
 const (

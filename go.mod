@@ -1,4 +1,4 @@
-module github.com/jalavosus/ratelimit
+module github.com/stoicturtle/ratelimit
 
 go 1.17
 
