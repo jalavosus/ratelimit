@@ -6,7 +6,7 @@ It is not recommended to use this in production. Ever. Unless you really want to
 
 ## bucket
 
-I have exactly zero idea how [bucket](bucket.go) works. If someone can explain it to me, that would be great.
+I have exactly zero idea how [bucket](internal/bucket/bucket.go) works. If someone can explain it to me, that would be great.
 
 ## Installation
 

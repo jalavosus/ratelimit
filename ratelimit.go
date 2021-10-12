@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"golang.org/x/sync/errgroup"
+
+	"github.com/stoicturtle/ratelimit/internal/bucket"
 )
 
 // TODO: does it make sense to call f() within a goroutine/errgroup if it's likely already being called from within (or as) a goroutine?
@@ -40,8 +42,8 @@ type RateLimiter struct {
 	interval         time.Duration
 	mux              *sync.RWMutex
 	ticker           *time.Ticker
+	bucket           *bucket.Bucket
 	bucketTimeout    time.Duration
-	bucket           *bucket
 }
 
 // NewRateLimiter returns a RateLimiter configured with the number of allowed function calls per interval, as well as the interval.
@@ -55,8 +57,8 @@ func NewRateLimiter(callsPerInterval int64, interval time.Duration) *RateLimiter
 		interval:         interval,
 		mux:              new(sync.RWMutex),
 		ticker:           time.NewTicker(interval),
+		bucket:           bucket.NewBucket(callsPerInterval),
 		bucketTimeout:    DefaultBucketTimeout,
-		bucket:           newBucket(callsPerInterval),
 	}
 
 	return r
@@ -134,7 +136,7 @@ func (r RateLimiter) CallsPerInterval() int64 {
 func (r *RateLimiter) SetCallsPerInterval(n int64) *RateLimiter {
 	r.withWriteLock(func() {
 		r.callsPerInterval = n
-		r.bucket.setBucketSize(n)
+		r.bucket.SetSize(n)
 	})
 
 	return r
@@ -183,7 +185,7 @@ func (r *RateLimiter) SetBucketTimeout(timeout time.Duration) *RateLimiter {
 func (r *RateLimiter) bucketFiller() {
 	go func(r *RateLimiter) {
 		for range r.ticker.C {
-			r.bucket.emptyBucket()
+			r.bucket.Empty()
 		}
 	}(r)
 }
@@ -199,11 +201,11 @@ func (r *RateLimiter) withBucket(ctx context.Context, fn RateLimiterFn) error {
 	// }
 
 	// if this returns an error, it's likely a wrapped context.DeadlineExceeded error.
-	if err := r.bucket.addToBucket(ctx); err != nil {
+	if err := r.bucket.Acquire(ctx); err != nil {
 		return err
 	}
 
-	defer r.bucket.removeFromBucket()
+	defer r.bucket.Release()
 
 	return fn()
 }
