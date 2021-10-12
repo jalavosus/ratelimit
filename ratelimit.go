@@ -76,12 +76,18 @@ func (r *RateLimiter) RateLimit(fn RateLimiterFn) error {
 		cancel context.CancelFunc
 	)
 
-	ctx = context.WithValue(context.Background(), rateLimitCtxKey, rateLimitCtxVal)
+	ctx = r.makeCtx()
 
 	ctx, cancel = context.WithTimeout(context.Background(), r.bucketTimeout)
 	defer cancel()
 
 	return r.RateLimitContext(ctx, fn)
+}
+
+func (r *RateLimiter) RateLimitSync(fn RateLimiterFn) error {
+	ctx := r.makeCtx()
+
+	return r.RateLimitContextSync(ctx, fn)
 }
 
 // RateLimitContext calls the passed function fn using the passed context.Context.
@@ -101,6 +107,10 @@ func (r *RateLimiter) RateLimitContext(ctx context.Context, fn RateLimiterFn) er
 	err := g.Wait()
 
 	return err
+}
+
+func (r *RateLimiter) RateLimitContextSync(ctx context.Context, fn RateLimiterFn) error {
+	return fn()
 }
 
 // Wrap wraps the passed function within another function, which no parameters
@@ -222,6 +232,10 @@ func (r *RateLimiter) withWriteLock(f func()) {
 	defer r.mux.Unlock()
 
 	f()
+}
+
+func (r RateLimiter) makeCtx() context.Context {
+	return context.WithValue(context.Background(), rateLimitCtxKey, rateLimitCtxVal)
 }
 
 func (r RateLimiter) checkRateLimiterCtx(ctx context.Context) bool {
