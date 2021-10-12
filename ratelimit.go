@@ -13,11 +13,11 @@ const (
 	rateLimitCtxVal string = "rateLimit42"
 )
 
-// DefaultSemaphoreTimeout is the default amount of time that a call to RateLimiter.RateLimit will wait to acquire
-// a semaphore before timing out and returning a context.DeadlineExceeded error.
+// DefaultBucketTimeout is the default amount of time that a call to RateLimiter.RateLimit will wait to acquire
+// some bucket space before timing out and returning a context.DeadlineExceeded error.
 //
 // Note that this does *not* apply to RateLimiter.RateLimitContext when called with a programmer-created context.
-const DefaultSemaphoreTimeout = time.Minute
+const DefaultBucketTimeout = time.Minute
 
 type (
 	// WrappedFn represents a function wrapped by a call to RateLimiter.RateLimit.
@@ -33,7 +33,7 @@ type RateLimiter struct {
 	interval         time.Duration
 	mux              *sync.RWMutex
 	ticker           *time.Ticker
-	semTimeout       time.Duration
+	bucketTimeout    time.Duration
 	bucket           *bucket
 }
 
@@ -48,20 +48,20 @@ func NewRateLimiter(callsPerInterval int64, interval time.Duration) *RateLimiter
 		interval:         interval,
 		mux:              new(sync.RWMutex),
 		ticker:           time.NewTicker(interval),
-		semTimeout:       DefaultSemaphoreTimeout,
+		bucketTimeout:    DefaultBucketTimeout,
 		bucket:           newBucket(callsPerInterval),
 	}
 
 	return r
 }
 
-// RateLimit calls RateLimitContext using a "default" context, which is a context.Context using the RateLimiter's current semaphore timeout
-// as the time.Duration passed to context.WithTimeout (by default, this is set to DefaultSemaphoreTimeout).
+// RateLimit calls RateLimitContext using a "default" context, which is a context.Context using the RateLimiter's current bucket timeout
+// as the time.Duration passed to context.WithTimeout (by default, this is set to DefaultBucketTimeout).
 //
 // Param f: function with no parameters which returns an error. This is usually wrapped around the function call
 // one is actually making.
 //
-// Return: error, if one occurs either from calling f() or from the context
+// Return: error, if one occurs either from calling f() or from the context.
 // Otherwise, any error returned from calling f() is returned.
 func (r *RateLimiter) RateLimit(f func() error) error {
 	var (
@@ -71,14 +71,14 @@ func (r *RateLimiter) RateLimit(f func() error) error {
 
 	ctx = context.WithValue(context.Background(), rateLimitCtxKey, rateLimitCtxVal)
 
-	ctx, cancel = context.WithTimeout(context.Background(), r.semTimeout)
+	ctx, cancel = context.WithTimeout(context.Background(), r.bucketTimeout)
 	defer cancel()
 
 	return r.RateLimitContext(ctx, f)
 }
 
 // RateLimitContext calls the passed function f using the passed context.Context.
-// If the passed context's deadline is exceeded while waiting to acquire a semaphore, a wrapped error is returned.
+// If the passed context's deadline is exceeded while waiting to acquire bucket space, a wrapped error is returned.
 // Otherwise, the result of calling f() is returned.
 func (r *RateLimiter) RateLimitContext(ctx context.Context, f func() error) error {
 	var g *errgroup.Group
@@ -152,22 +152,22 @@ func (r *RateLimiter) SetInterval(interval time.Duration) *RateLimiter {
 	return r
 }
 
-// SemaphoreTimeout returns the current configured timeout duration used for non-contexed calls to RateLimit,
+// BucketTimeout returns the current configured timeout duration used for non-contexed calls to RateLimit,
 // after which deadline the context will return a context.DeadlineExceeded error.
 //
-// By default, this is set to DefaultSemaphoreTimeout (1 minute).
-func (r RateLimiter) SemaphoreTimeout() time.Duration {
+// By default, this is set to DefaultBucketTimeout (1 minute).
+func (r RateLimiter) BucketTimeout() time.Duration {
 	return r.withReadLock(func() interface{} {
-		return r.semTimeout
+		return r.bucketTimeout
 	}).(time.Duration)
 }
 
-// SetSemaphoreTimeout sets the timeout duration used for non-contexed calls to RateLimit,
+// SetBucketTimeout sets the timeout duration used for non-contexed calls to RateLimit,
 // after which deadline the context will return a context.DeadlineExceeded error.
 // Note that this function will block the RateLimiter's other functions until it finishes.
-func (r *RateLimiter) SetSemaphoreTimeout(timeout time.Duration) *RateLimiter {
+func (r *RateLimiter) SetBucketTimeout(timeout time.Duration) *RateLimiter {
 	r.withWriteLock(func() {
-		r.semTimeout = timeout
+		r.bucketTimeout = timeout
 	})
 
 	return r
@@ -185,6 +185,8 @@ func (r *RateLimiter) setTicker(interval time.Duration) {
 	r.ticker.Reset(interval)
 }
 
+// Below are functions which wrap other functions, similar to python's `with` scope/context management system.
+
 func (r RateLimiter) withReadLock(f func() interface{}) interface{} {
 	r.mux.RLock()
 	defer r.mux.RUnlock()
@@ -199,11 +201,13 @@ func (r *RateLimiter) withWriteLock(f func()) {
 	f()
 }
 
+// I'm truly amazed that this works.
 func (r *RateLimiter) withBucket(ctx context.Context, f func() error) error {
 	if r.checkRateLimiterCtx(ctx) {
 		// not quite sure what to do with this yet
 	}
 
+	// if this returns an error, it's likely a wrapped context.DeadlineExceeded error.
 	if err := r.bucket.addToBucket(ctx); err != nil {
 		return err
 	}

@@ -257,7 +257,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
 // 		ticker              *time.Ticker
-// 		semTimeout          time.Duration
+// 		bucketTimeout          time.Duration
 // 		bucket              *bucket
 // 	}
 // 	type args struct {
@@ -280,7 +280,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
 // 					ticker:              tt.fields.ticker,
-// 					semTimeout:          tt.fields.semTimeout,
+// 					bucketTimeout:          tt.fields.bucketTimeout,
 // 					bucket:              tt.fields.bucket,
 // 				}
 // 				if got := r.SetInterval(tt.args.interval); !reflect.DeepEqual(got, tt.want) {
@@ -298,7 +298,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
 // 		ticker              *time.Ticker
-// 		semTimeout          time.Duration
+// 		bucketTimeout          time.Duration
 // 		bucket              *bucket
 // 	}
 // 	type args struct {
@@ -321,7 +321,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
 // 					ticker:              tt.fields.ticker,
-// 					semTimeout:          tt.fields.semTimeout,
+// 					bucketTimeout:          tt.fields.bucketTimeout,
 // 					bucket:              tt.fields.bucket,
 // 				}
 // 				if got := r.SetCallsPerInterval(tt.args.rpi); !reflect.DeepEqual(got, tt.want) {
@@ -339,7 +339,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
 // 		ticker              *time.Ticker
-// 		semTimeout          time.Duration
+// 		bucketTimeout          time.Duration
 // 		bucket              *bucket
 // 	}
 // 	type args struct {
@@ -362,11 +362,11 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
 // 					ticker:              tt.fields.ticker,
-// 					semTimeout:          tt.fields.semTimeout,
+// 					bucketTimeout:          tt.fields.bucketTimeout,
 // 					bucket:              tt.fields.bucket,
 // 				}
-// 				if got := r.SetSemaphoreTimeout(tt.args.timeout); !reflect.DeepEqual(got, tt.want) {
-// 					t.Errorf("SetSemaphoreTimeout() = %v, want %v", got, tt.want)
+// 				if got := r.SetBucketTimeout(tt.args.timeout); !reflect.DeepEqual(got, tt.want) {
+// 					t.Errorf("SetBucketTimeout() = %v, want %v", got, tt.want)
 // 				}
 // 			},
 // 		)
@@ -380,7 +380,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
 // 		ticker              *time.Ticker
-// 		semTimeout          time.Duration
+// 		bucketTimeout          time.Duration
 // 		bucket              *bucket
 // 	}
 // 	type args struct {
@@ -403,7 +403,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
 // 					ticker:              tt.fields.ticker,
-// 					semTimeout:          tt.fields.semTimeout,
+// 					bucketTimeout:          tt.fields.bucketTimeout,
 // 					bucket:              tt.fields.bucket,
 // 				}
 // 				if got := r.Wrap(tt.args.f); !reflect.DeepEqual(got, tt.want) {
@@ -421,7 +421,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
 // 		ticker              *time.Ticker
-// 		semTimeout          time.Duration
+// 		bucketTimeout          time.Duration
 // 		bucket              *bucket
 // 	}
 // 	type args struct {
@@ -444,7 +444,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
 // 					ticker:              tt.fields.ticker,
-// 					semTimeout:          tt.fields.semTimeout,
+// 					bucketTimeout:          tt.fields.bucketTimeout,
 // 					bucket:              tt.fields.bucket,
 // 				}
 // 				if got := r.WrapContext(tt.args.f); !reflect.DeepEqual(got, tt.want) {
