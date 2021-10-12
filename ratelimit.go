@@ -28,6 +28,9 @@ type (
 	WrappedFn func() error
 	// WrappedFnContext represents a function wrapped by a call to RateLimiter.RateLimitContext.
 	WrappedFnContext func(context.Context) error
+	// RateLimiterFn is a function which takes no parameters, and returns an error.
+	// It represents the function type passed to RateLimiter.RateLimit and RateLimiter.RateLimitContext.
+	RateLimiterFn func() error
 )
 
 // RateLimiter is a fancy little struct which can do everything you want it to and more
@@ -62,12 +65,12 @@ func NewRateLimiter(callsPerInterval int64, interval time.Duration) *RateLimiter
 // RateLimit calls RateLimitContext using a "default" context, which is a context.Context using the RateLimiter's current bucket timeout
 // as the time.Duration passed to context.WithTimeout (by default, this is set to DefaultBucketTimeout).
 //
-// Param f: function with no parameters which returns an error. This is usually wrapped around the function call
+// Param fn: function with no parameters which returns an error (see RateLimiterFn). This is usually wrapped around the function call
 // one is actually making.
 //
-// Return: error, if one occurs either from calling f() or from the context.
-// Otherwise, any error returned from calling f() is returned.
-func (r *RateLimiter) RateLimit(f func() error) error {
+// Return: error, if one occurs either from calling fn() or from the context.
+// Otherwise, any error returned from calling fn() is returned.
+func (r *RateLimiter) RateLimit(fn RateLimiterFn) error {
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
@@ -78,19 +81,19 @@ func (r *RateLimiter) RateLimit(f func() error) error {
 	ctx, cancel = context.WithTimeout(context.Background(), r.bucketTimeout)
 	defer cancel()
 
-	return r.RateLimitContext(ctx, f)
+	return r.RateLimitContext(ctx, fn)
 }
 
-// RateLimitContext calls the passed function f using the passed context.Context.
+// RateLimitContext calls the passed function fn using the passed context.Context.
 // If the passed context's deadline is exceeded while waiting to acquire bucket space, a wrapped error is returned.
-// Otherwise, the result of calling f() is returned.
-func (r *RateLimiter) RateLimitContext(ctx context.Context, f func() error) error {
+// Otherwise, the result of calling fn() is returned.
+func (r *RateLimiter) RateLimitContext(ctx context.Context, fn RateLimiterFn) error {
 	var g *errgroup.Group
 
 	g, ctx = errgroup.WithContext(ctx)
 
 	gFunc := func() error {
-		return r.withBucket(ctx, f)
+		return r.withBucket(ctx, fn)
 	}
 
 	g.Go(gFunc)
@@ -101,20 +104,20 @@ func (r *RateLimiter) RateLimitContext(ctx context.Context, f func() error) erro
 }
 
 // Wrap wraps the passed function within another function, which no parameters
-// and calls RateLimit using f(). Helpful for building functions which are "preloaded" with
+// and calls RateLimit using fn(). Helpful for building functions which are "preloaded" with
 // a rate limiter, rather than calling RateLimit around every function call.
-func (r *RateLimiter) Wrap(f func() error) WrappedFn {
+func (r *RateLimiter) Wrap(fn RateLimiterFn) WrappedFn {
 	return func() error {
-		return r.RateLimit(f)
+		return r.RateLimit(fn)
 	}
 }
 
 // WrapContext wraps the passed function within another function, which takes a single context.Context parameter
-// and calls RateLimitContext using f() and that context. Helpful for building functions which are "preloaded" with
+// and calls RateLimitContext using fn() and that context. Helpful for building functions which are "preloaded" with
 // a rate limiter, rather than calling RateLimitContext around every function call.
-func (r *RateLimiter) WrapContext(f func() error) WrappedFnContext {
+func (r *RateLimiter) WrapContext(fn RateLimiterFn) WrappedFnContext {
 	return func(ctx context.Context) error {
-		return r.RateLimitContext(ctx, f)
+		return r.RateLimitContext(ctx, fn)
 	}
 }
 
@@ -189,6 +192,22 @@ func (r *RateLimiter) setTicker(interval time.Duration) {
 	r.ticker.Reset(interval)
 }
 
+// I'm truly amazed that this works.
+func (r *RateLimiter) withBucket(ctx context.Context, fn RateLimiterFn) error {
+	// not quite sure what to do with this yet
+	// if r.checkRateLimiterCtx(ctx) {
+	// }
+
+	// if this returns an error, it's likely a wrapped context.DeadlineExceeded error.
+	if err := r.bucket.addToBucket(ctx); err != nil {
+		return err
+	}
+
+	defer r.bucket.removeFromBucket()
+
+	return fn()
+}
+
 // Below are functions which wrap other functions, similar to python's `with` scope/context management system.
 
 func (r RateLimiter) withReadLock(f func() interface{}) interface{} {
@@ -203,22 +222,6 @@ func (r *RateLimiter) withWriteLock(f func()) {
 	defer r.mux.Unlock()
 
 	f()
-}
-
-// I'm truly amazed that this works.
-func (r *RateLimiter) withBucket(ctx context.Context, f func() error) error {
-	// not quite sure what to do with this yet
-	// if r.checkRateLimiterCtx(ctx) {
-	// }
-
-	// if this returns an error, it's likely a wrapped context.DeadlineExceeded error.
-	if err := r.bucket.addToBucket(ctx); err != nil {
-		return err
-	}
-
-	defer r.bucket.removeFromBucket()
-
-	return f()
 }
 
 func (r RateLimiter) checkRateLimiterCtx(ctx context.Context) bool {
