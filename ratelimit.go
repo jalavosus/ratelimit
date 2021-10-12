@@ -40,8 +40,8 @@ type RateLimiter struct {
 // NewRateLimiter returns a RateLimiter configured with the number of allowed function calls per interval, as well as the interval.
 //
 // Examples:
-// - api A allows 250 requests per second. Call NewRateLimiter(250, time.Second).
-// - api B allowed 50 requests per 5 minutes. Call NewRateLimiter(50, 5*time.Minute).
+// - api A allows 250 calls per second. Call NewRateLimiter(250, time.Second).
+// - api B allowed 50 calls per 5 minutes. Call NewRateLimiter(50, 5*time.Minute).
 func NewRateLimiter(callsPerInterval int64, interval time.Duration) *RateLimiter {
 	r := &RateLimiter{
 		callsPerInterval: callsPerInterval,
@@ -114,7 +114,7 @@ func (r *RateLimiter) WrapContext(f func() error) WrappedFnContext {
 	}
 }
 
-// CallsPerInterval returns the current number of requests allowed to be made during
+// CallsPerInterval returns the current number of calls allowed to be made during
 // a RateLimiter's interval.
 func (r RateLimiter) CallsPerInterval() int64 {
 	return r.withReadLock(func() interface{} {
@@ -122,12 +122,12 @@ func (r RateLimiter) CallsPerInterval() int64 {
 	}).(int64)
 }
 
-// SetCallsPerInterval sets the number of requests allowed to be made during the configured interval.
+// SetCallsPerInterval sets the number of calls allowed to be made during the configured interval.
 // Note that this function will block the RateLimiter's other functions until it finishes.
-func (r *RateLimiter) SetCallsPerInterval(rpi int64) *RateLimiter {
+func (r *RateLimiter) SetCallsPerInterval(n int64) *RateLimiter {
 	r.withWriteLock(func() {
-		r.callsPerInterval = rpi
-		// r.bucket.setBucketSize(rpi)
+		r.callsPerInterval = n
+		r.bucket.setBucketSize(n)
 	})
 
 	return r
@@ -141,7 +141,7 @@ func (r RateLimiter) Interval() time.Duration {
 }
 
 // SetInterval sets the RateLimiter's interval within which the RateLimiter's callsPerInterval number of
-// requests are allowed to be made.
+// calls are allowed to be made.
 // Note that this function will block the RateLimiter's other functions until it finishes.
 func (r *RateLimiter) SetInterval(interval time.Duration) *RateLimiter {
 	r.withWriteLock(func() {

@@ -10,6 +10,7 @@ type bucket struct {
 	bucketSize     int64
 	bucketAddCh    chan int64
 	bucketRemoveCh chan int64
+	bucketSizeCh   chan int64
 	bucketResetCh  chan bool
 }
 
@@ -18,6 +19,7 @@ func newBucket(bucketSize int64) *bucket {
 		bucketSize:     bucketSize,
 		bucketAddCh:    make(chan int64),
 		bucketRemoveCh: make(chan int64, 1),
+		bucketSizeCh:   make(chan int64),
 		bucketResetCh:  make(chan bool, 1),
 	}
 
@@ -50,14 +52,25 @@ func (b *bucket) emptyBucket() {
 	b.bucketResetCh <- true
 }
 
+func (b *bucket) setBucketSize(newSize int64) {
+	b.bucketSize = newSize
+	b.bucketSizeCh <- newSize
+}
+
 func (b *bucket) startBucket() {
 	go func(b *bucket) {
 		var (
-			available = b.bucketSize
+			lastBucketSize = b.bucketSize
+			available      = b.bucketSize
 		)
 
 		for {
 			select {
+			case newSize := <-b.bucketSizeCh:
+				diff := newSize - lastBucketSize
+				available += diff
+
+				lastBucketSize = newSize
 			case <-b.bucketRemoveCh:
 				available++
 			case <-b.bucketResetCh:
