@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - pre_ci
-    if: ${{ contains(needs.pre_ci.outputs.commit_message), '[ci release]') && github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ contains(needs.pre_ci.outputs.commit_message, '[ci release]') && github.event.workflow_run.conclusion == 'success' }}
     steps:
       - name: Git Checkout
         uses: actions/checkout@v2
