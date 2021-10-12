@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"golang.org/x/sync/errgroup"
 
@@ -64,18 +65,18 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 			f:       limitHitterFn,
 			wantErr: false,
 		},
-		{
-			name:    "needs-limit-omfg",
-			resLen:  int(maxRequests * 30),
-			f:       limitHitterFn,
-			wantErr: false,
-		},
-		{
-			name:    "needs-limit-omfg-2",
-			resLen:  int(maxRequests * 60),
-			f:       limitHitterFn,
-			wantErr: false,
-		},
+		// {
+		// 	name:    "needs-limit-omfg",
+		// 	resLen:  int(maxRequests * 30),
+		// 	f:       limitHitterFn,
+		// 	wantErr: false,
+		// },
+		// {
+		// 	name:    "needs-limit-omfg-2",
+		// 	resLen:  int(maxRequests * 60),
+		// 	f:       limitHitterFn,
+		// 	wantErr: false,
+		// },
 	}
 
 	for _, tt := range tests {
@@ -124,51 +125,134 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 	}
 }
 
-// func TestRateLimiter_RateLimitContext(t *testing.T) {
-// 	type fields struct {
-// 		requestsPerInterval int64
-// 		interval            time.Duration
-// 		mux                 *sync.RWMutex
-// 		sem                 *semaphore.Weighted
-// 		ticker              *time.Ticker
-// 		semTimeout          time.Duration
-// 		bucket              *bucket
-// 	}
-// 	type args struct {
-// 		ctx context.Context
-// 		f   func() error
-// 	}
-// 	tests := []struct {
-// 		name    string
-// 		fields  fields
-// 		args    args
-// 		wantErr bool
-// 	}{
-// 		// TODO: Add test cases.
-// 	}
-// 	for _, tt := range tests {
-// 		t.Run(
-// 			tt.name, func(t *testing.T) {
-// 				r := &ratelimit.RateLimiter{
-// 					requestsPerInterval: tt.fields.requestsPerInterval,
-// 					interval:            tt.fields.interval,
-// 					mux:                 tt.fields.mux,
-// 					sem:                 tt.fields.sem,
-// 					ticker:              tt.fields.ticker,
-// 					semTimeout:          tt.fields.semTimeout,
-// 					bucket:              tt.fields.bucket,
-// 				}
-// 				if err := r.RateLimitContext(tt.args.ctx, tt.args.f); (err != nil) != tt.wantErr {
-// 					t.Errorf("RateLimitContext() error = %v, wantErr %v", err, tt.wantErr)
-// 				}
-// 			},
-// 		)
-// 	}
-// }
+func TestRateLimiter_RateLimitContext(t *testing.T) {
+	tests := []struct {
+		name    string
+		resLen  int
+		f       func() float64
+		timeout time.Duration
+		wantErr bool
+	}{
+		{
+			name:    "simple",
+			resLen:  200,
+			f:       simpleRateLimitFn,
+			timeout: 30 * time.Second,
+			wantErr: false,
+		},
+		{
+			name:    "needs-limit",
+			resLen:  int(maxRequests * 3),
+			f:       limitHitterFn,
+			timeout: 1500 * time.Millisecond,
+			wantErr: false,
+		},
+		{
+			name:    "exceeds-deadline",
+			resLen:  int(maxRequests * 3),
+			f:       limitHitterFn,
+			timeout: 500 * time.Millisecond,
+			wantErr: true,
+		},
+		// may-exceed-deadline test cases are allowed to exceed timeout without failing, since the rate limiter
+		// can be variable in how fast it processes things.
+		// That is to say, sometimes they pass without the timeout being exceeded, other times not.
+		{
+			name:    "may-exceed-deadline",
+			resLen:  int(maxRequests * 2),
+			f:       limitHitterFn,
+			timeout: limitHitterSleepDuration,
+			wantErr: true,
+		},
+		{
+			name:    "may-exceed-deadline-2",
+			resLen:  int(maxRequests * 2),
+			f:       limitHitterFn,
+			timeout: limitHitterSleepDuration + 1*time.Millisecond,
+			wantErr: true,
+		},
+		{
+			name:    "may-exceed-deadline-3",
+			resLen:  int(maxRequests * 2),
+			f:       limitHitterFn,
+			timeout: limitHitterSleepDuration + 4*time.Millisecond,
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var resSlice = make([]float64, 0, tt.resLen)
+
+			r := newRateLimiter()
+
+			var (
+				wg sync.WaitGroup
+				ch = make(chan float64, tt.resLen)
+			)
+
+			f := func() error {
+				defer wg.Done()
+				ch <- tt.f()
+
+				return nil
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), tt.timeout)
+			defer cancel()
+
+			var g *errgroup.Group
+			g, ctx = errgroup.WithContext(ctx)
+
+			for i := 0; i < tt.resLen; i++ {
+				wg.Add(1)
+				g.Go(func() error {
+					return r.RateLimitContext(ctx, f)
+				})
+			}
+
+			go func() {
+				defer close(ch)
+				wg.Wait()
+			}()
+
+			doneCh := make(chan bool)
+
+			go func(doneCh chan<- bool) {
+				defer func() {
+					doneCh <- true
+				}()
+
+				for res := range ch {
+					resSlice = append(resSlice, res)
+				}
+			}(doneCh)
+
+			waitGroupErr := g.Wait()
+
+			if waitGroupErr != nil {
+				if !tt.wantErr {
+					t.Errorf("RateLimitContext() error = %v, wantErr %v", waitGroupErr, tt.wantErr)
+					t.FailNow()
+				} else {
+					if errors.Is(waitGroupErr, context.DeadlineExceeded) {
+						t.Log("context deadline exceeded, but it's okay")
+					}
+
+					return
+				}
+			}
+
+			<-doneCh
+
+			assert.Lenf(t, resSlice, tt.resLen, "resSlice has %d elements; wanted %d elements", len(resSlice), tt.resLen)
+		})
+	}
+}
 
 // func TestRateLimiter_SetInterval(t *testing.T) {
 // 	type fields struct {
-// 		requestsPerInterval int64
+// 		callsPerInterval int64
 // 		interval            time.Duration
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
@@ -191,7 +275,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 // 		t.Run(
 // 			tt.name, func(t *testing.T) {
 // 				r := &ratelimit.RateLimiter{
-// 					requestsPerInterval: tt.fields.requestsPerInterval,
+// 					callsPerInterval: tt.fields.callsPerInterval,
 // 					interval:            tt.fields.interval,
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
@@ -209,7 +293,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 
 // func TestRateLimiter_SetRequestsPerInterval(t *testing.T) {
 // 	type fields struct {
-// 		requestsPerInterval int64
+// 		callsPerInterval int64
 // 		interval            time.Duration
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
@@ -232,7 +316,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 // 		t.Run(
 // 			tt.name, func(t *testing.T) {
 // 				r := &ratelimit.RateLimiter{
-// 					requestsPerInterval: tt.fields.requestsPerInterval,
+// 					callsPerInterval: tt.fields.callsPerInterval,
 // 					interval:            tt.fields.interval,
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
@@ -240,8 +324,8 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 // 					semTimeout:          tt.fields.semTimeout,
 // 					bucket:              tt.fields.bucket,
 // 				}
-// 				if got := r.SetRequestsPerInterval(tt.args.rpi); !reflect.DeepEqual(got, tt.want) {
-// 					t.Errorf("SetRequestsPerInterval() = %v, want %v", got, tt.want)
+// 				if got := r.SetCallsPerInterval(tt.args.rpi); !reflect.DeepEqual(got, tt.want) {
+// 					t.Errorf("SetCallsPerInterval() = %v, want %v", got, tt.want)
 // 				}
 // 			},
 // 		)
@@ -250,7 +334,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 
 // func TestRateLimiter_SetSemaphoreTimeout(t *testing.T) {
 // 	type fields struct {
-// 		requestsPerInterval int64
+// 		callsPerInterval int64
 // 		interval            time.Duration
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
@@ -273,7 +357,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 // 		t.Run(
 // 			tt.name, func(t *testing.T) {
 // 				r := &ratelimit.RateLimiter{
-// 					requestsPerInterval: tt.fields.requestsPerInterval,
+// 					callsPerInterval: tt.fields.callsPerInterval,
 // 					interval:            tt.fields.interval,
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
@@ -291,7 +375,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 
 // func TestRateLimiter_Wrap(t *testing.T) {
 // 	type fields struct {
-// 		requestsPerInterval int64
+// 		callsPerInterval int64
 // 		interval            time.Duration
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
@@ -314,7 +398,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 // 		t.Run(
 // 			tt.name, func(t *testing.T) {
 // 				r := &ratelimit.RateLimiter{
-// 					requestsPerInterval: tt.fields.requestsPerInterval,
+// 					callsPerInterval: tt.fields.callsPerInterval,
 // 					interval:            tt.fields.interval,
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
@@ -332,7 +416,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 
 // func TestRateLimiter_WrapContext(t *testing.T) {
 // 	type fields struct {
-// 		requestsPerInterval int64
+// 		callsPerInterval int64
 // 		interval            time.Duration
 // 		mux                 *sync.RWMutex
 // 		sem                 *semaphore.Weighted
@@ -355,7 +439,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 // 		t.Run(
 // 			tt.name, func(t *testing.T) {
 // 				r := &ratelimit.RateLimiter{
-// 					requestsPerInterval: tt.fields.requestsPerInterval,
+// 					callsPerInterval: tt.fields.callsPerInterval,
 // 					interval:            tt.fields.interval,
 // 					mux:                 tt.fields.mux,
 // 					sem:                 tt.fields.sem,
