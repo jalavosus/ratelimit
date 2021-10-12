@@ -207,9 +207,9 @@ func (r *RateLimiter) withWriteLock(f func()) {
 
 // I'm truly amazed that this works.
 func (r *RateLimiter) withBucket(ctx context.Context, f func() error) error {
-	if r.checkRateLimiterCtx(ctx) {
-		// not quite sure what to do with this yet
-	}
+	// not quite sure what to do with this yet
+	// if r.checkRateLimiterCtx(ctx) {
+	// }
 
 	// if this returns an error, it's likely a wrapped context.DeadlineExceeded error.
 	if err := r.bucket.addToBucket(ctx); err != nil {
