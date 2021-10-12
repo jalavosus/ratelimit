@@ -218,9 +218,7 @@ func (r RateLimiter) checkRateLimiterCtx(ctx context.Context) bool {
 	// a context which was passed from elsewhere
 	if ctxVal := ctx.Value(rateLimitCtxKey); ctxVal != nil {
 		val, ok := ctxVal.(string)
-		if ok && val == rateLimitCtxVal {
-			return true
-		}
+		return ok && val == rateLimitCtxVal
 	}
 
 	return false
