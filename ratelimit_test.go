@@ -3,6 +3,7 @@ package ratelimit_test
 import (
 	"context"
 	"math/rand"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -20,12 +21,10 @@ const (
 	limitHitterSleepDuration       = 650 * time.Millisecond
 )
 
-func init() {
+func TestMain(m *testing.M) {
 	rand.Seed(time.Now().UnixNano())
-}
 
-func newRateLimiter() *ratelimit.RateLimiter {
-	return ratelimit.NewRateLimiter(maxRequests, requestInterval)
+	os.Exit(m.Run())
 }
 
 func simpleRateLimitFn() float64 {
@@ -83,7 +82,7 @@ func TestRateLimiter_RateLimit(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var resSlice = make([]float64, 0, tt.resLen)
 
-			r := newRateLimiter()
+			r := ratelimit.NewRateLimiter(maxRequests, requestInterval)
 
 			ch := make(chan float64, tt.resLen)
 
@@ -184,7 +183,7 @@ func TestRateLimiter_RateLimitContext(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var resSlice = make([]float64, 0, tt.resLen)
 
-			r := newRateLimiter()
+			r := ratelimit.NewRateLimiter(maxRequests, requestInterval)
 
 			var (
 				wg sync.WaitGroup
