@@ -5,9 +5,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/sync/semaphore"
+)
+
+const (
+	rateLimitCtxKey string = "edforceone"
+	rateLimitCtxVal string = "rateLimit42"
 )
 
 // DefaultSemaphoreTimeout is the default amount of time that a call to RateLimiter.RateLimit will wait to acquire
@@ -26,29 +29,27 @@ type (
 // RateLimiter is a fancy little struct which can do everything you want it to and more
 // in the realm of rate limiting.
 type RateLimiter struct {
-	requestsPerInterval int64
-	interval            time.Duration
-	mux                 *sync.RWMutex
-	sem                 *semaphore.Weighted
-	ticker              *time.Ticker
-	semTimeout          time.Duration
-	bucket              *bucket
+	callsPerInterval int64
+	interval         time.Duration
+	mux              *sync.RWMutex
+	ticker           *time.Ticker
+	semTimeout       time.Duration
+	bucket           *bucket
 }
 
-// NewRateLimiter returns a RateLimiter configured with the number of allowed requests per interval, as well as the interval.
+// NewRateLimiter returns a RateLimiter configured with the number of allowed function calls per interval, as well as the interval.
 //
 // Examples:
 // - api A allows 250 requests per second. Call NewRateLimiter(250, time.Second).
 // - api B allowed 50 requests per 5 minutes. Call NewRateLimiter(50, 5*time.Minute).
-func NewRateLimiter(requestsPerInterval int64, interval time.Duration) *RateLimiter {
+func NewRateLimiter(callsPerInterval int64, interval time.Duration) *RateLimiter {
 	r := &RateLimiter{
-		requestsPerInterval: requestsPerInterval,
-		interval:            interval,
-		mux:                 new(sync.RWMutex),
-		sem:                 semaphore.NewWeighted(requestsPerInterval),
-		ticker:              time.NewTicker(interval),
-		semTimeout:          DefaultSemaphoreTimeout,
-		bucket:              newBucket(requestsPerInterval),
+		callsPerInterval: callsPerInterval,
+		interval:         interval,
+		mux:              new(sync.RWMutex),
+		ticker:           time.NewTicker(interval),
+		semTimeout:       DefaultSemaphoreTimeout,
+		bucket:           newBucket(callsPerInterval),
 	}
 
 	return r
@@ -63,7 +64,14 @@ func NewRateLimiter(requestsPerInterval int64, interval time.Duration) *RateLimi
 // Return: error, if one occurs either from calling f() or from the context
 // Otherwise, any error returned from calling f() is returned.
 func (r *RateLimiter) RateLimit(f func() error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), r.semTimeout)
+	var (
+		ctx    context.Context
+		cancel context.CancelFunc
+	)
+
+	ctx = context.WithValue(context.Background(), rateLimitCtxKey, rateLimitCtxVal)
+
+	ctx, cancel = context.WithTimeout(context.Background(), r.semTimeout)
 	defer cancel()
 
 	return r.RateLimitContext(ctx, f)
@@ -78,17 +86,7 @@ func (r *RateLimiter) RateLimitContext(ctx context.Context, f func() error) erro
 	g, ctx = errgroup.WithContext(ctx)
 
 	gFunc := func() error {
-		if semErr := r.sem.Acquire(ctx, 1); semErr != nil {
-			if errors.Is(semErr, context.DeadlineExceeded) {
-				return errors.Wrap(semErr, "context deadline exceeded waiting to acquire semaphore")
-			}
-
-			return errors.Wrap(semErr, "error trying to acquire semaphore")
-		}
-
-		defer r.sem.Release(1)
-
-		return r.withBucket(f)
+		return r.withBucket(ctx, f)
 	}
 
 	g.Go(gFunc)
@@ -116,21 +114,20 @@ func (r *RateLimiter) WrapContext(f func() error) WrappedFnContext {
 	}
 }
 
-// RequestsPerInterval returns the current number of requests allowed to be made during
+// CallsPerInterval returns the current number of requests allowed to be made during
 // a RateLimiter's interval.
-func (r RateLimiter) RequestsPerInterval() int64 {
+func (r RateLimiter) CallsPerInterval() int64 {
 	return r.withReadLock(func() interface{} {
-		return r.requestsPerInterval
+		return r.callsPerInterval
 	}).(int64)
 }
 
-// SetRequestsPerInterval sets the number of requests allowed to be made during the configured interval.
+// SetCallsPerInterval sets the number of requests allowed to be made during the configured interval.
 // Note that this function will block the RateLimiter's other functions until it finishes.
-func (r *RateLimiter) SetRequestsPerInterval(rpi int64) *RateLimiter {
+func (r *RateLimiter) SetCallsPerInterval(rpi int64) *RateLimiter {
 	r.withWriteLock(func() {
-		r.requestsPerInterval = rpi
-		r.setSemaphore(rpi)
-		r.bucket.setMaxRequests(rpi)
+		r.callsPerInterval = rpi
+		// r.bucket.setBucketSize(rpi)
 	})
 
 	return r
@@ -143,7 +140,7 @@ func (r RateLimiter) Interval() time.Duration {
 	}).(time.Duration)
 }
 
-// SetInterval sets the RateLimiter's interval within which the RateLimiter's requestsPerInterval number of
+// SetInterval sets the RateLimiter's interval within which the RateLimiter's callsPerInterval number of
 // requests are allowed to be made.
 // Note that this function will block the RateLimiter's other functions until it finishes.
 func (r *RateLimiter) SetInterval(interval time.Duration) *RateLimiter {
@@ -179,17 +176,9 @@ func (r *RateLimiter) SetSemaphoreTimeout(timeout time.Duration) *RateLimiter {
 func (r *RateLimiter) bucketFiller() {
 	go func(r *RateLimiter) {
 		for range r.ticker.C {
-			r.withWriteLock(func() {
-				r.setSemaphore(r.requestsPerInterval)
-				r.bucket.setResetStateCleared()
-				r.bucket.emptyBucket()
-			})
+			r.bucket.emptyBucket()
 		}
 	}(r)
-}
-
-func (r *RateLimiter) setSemaphore(rpi int64) {
-	r.sem = semaphore.NewWeighted(rpi)
 }
 
 func (r *RateLimiter) setTicker(interval time.Duration) {
@@ -210,9 +199,29 @@ func (r *RateLimiter) withWriteLock(f func()) {
 	f()
 }
 
-func (r *RateLimiter) withBucket(f func() error) error {
-	r.bucket.addToBucket()
+func (r *RateLimiter) withBucket(ctx context.Context, f func() error) error {
+	if r.checkRateLimiterCtx(ctx) {
+		// not quite sure what to do with this yet
+	}
+
+	if err := r.bucket.addToBucket(ctx); err != nil {
+		return err
+	}
+
 	defer r.bucket.removeFromBucket()
 
 	return f()
+}
+
+func (r RateLimiter) checkRateLimiterCtx(ctx context.Context) bool {
+	// check if context was created by r.RateLimit instead of
+	// a context which was passed from elsewhere
+	if ctxVal := ctx.Value(rateLimitCtxKey); ctxVal != nil {
+		val, ok := ctxVal.(string)
+		if ok && val == rateLimitCtxVal {
+			return true
+		}
+	}
+
+	return false
 }

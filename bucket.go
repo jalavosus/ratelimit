@@ -1,79 +1,75 @@
 package ratelimit
 
 import (
-	"sync"
-	"sync/atomic"
-)
+	"context"
 
-const (
-	resetStateNeedsReset int64 = 1
-	resetStateCleared    int64 = 0
+	"github.com/pkg/errors"
 )
 
 type bucket struct {
-	maxRequests   int64
-	requestBucket *int64
-	mux           *sync.RWMutex
-	resetState    *int64
+	bucketSize     int64
+	bucketAddCh    chan int64
+	bucketRemoveCh chan int64
+	bucketResetCh  chan bool
 }
 
 func newBucket(bucketSize int64) *bucket {
-	nr := new(int64)
-	*nr = resetStateCleared
-
-	return &bucket{
-		maxRequests:   bucketSize,
-		requestBucket: new(int64),
-		mux:           new(sync.RWMutex),
-		resetState:    nr,
+	b := &bucket{
+		bucketSize:     bucketSize,
+		bucketAddCh:    make(chan int64),
+		bucketRemoveCh: make(chan int64, 1),
+		bucketResetCh:  make(chan bool, 1),
 	}
+
+	b.startBucket()
+
+	return b
 }
 
-func (b *bucket) addToBucket() {
-	bucketCount := b.getBucketCount()
-	if bucketCount >= b.maxRequests {
-		b.setNeedsReset()
-		b.waitReset()
-	}
+func (b *bucket) addToBucket(ctx context.Context) error {
+	for {
+		select {
+		case <-b.bucketAddCh:
+			return nil
+		case <-ctx.Done():
+			ctxErr := ctx.Err()
+			if errors.Is(ctxErr, context.DeadlineExceeded) {
+				return errors.Wrap(ctxErr, "context deadline exceeded waiting for open bucket space")
+			}
 
-	atomic.AddInt64(b.requestBucket, 1)
+			return ctxErr
+		}
+	}
 }
 
 func (b *bucket) removeFromBucket() {
-	bucketCount := b.getBucketCount()
-	if bucketCount == 0 {
-		b.setResetStateCleared()
-		return
-	}
-
-	atomic.AddInt64(b.requestBucket, -1)
+	go func(b *bucket) { b.bucketRemoveCh <- 1 }(b)
 }
 
 func (b *bucket) emptyBucket() {
-	atomic.StoreInt64(b.requestBucket, 0)
+	b.bucketResetCh <- true
 }
 
-func (b *bucket) setNeedsReset() {
-	atomic.CompareAndSwapInt64(b.resetState, b.getResetState(), resetStateNeedsReset)
-}
+func (b *bucket) startBucket() {
+	go func(b *bucket) {
+		var (
+			available = b.bucketSize
+		)
 
-func (b *bucket) waitReset() {
-	for b.getResetState() == resetStateNeedsReset {
-	}
-}
+		for {
+			select {
+			case <-b.bucketRemoveCh:
+				available++
+			case <-b.bucketResetCh:
+				available = b.bucketSize
+			default:
+				if available == 0 {
+					continue
+				}
 
-func (b *bucket) setResetStateCleared() {
-	atomic.CompareAndSwapInt64(b.resetState, b.getResetState(), resetStateCleared)
-}
-
-func (b *bucket) getResetState() int64 {
-	return atomic.LoadInt64(b.resetState)
-}
-
-func (b *bucket) setMaxRequests(n int64) {
-	b.maxRequests = n
-}
-
-func (b *bucket) getBucketCount() int64 {
-	return atomic.LoadInt64(b.requestBucket)
+				available--
+				b.bucketAddCh <- 1
+			}
+		}
+	}(b)
 }
