@@ -8,6 +8,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// TODO: does it make sense to call f() within a goroutine/errgroup if it's likely already being called from within (or as) a goroutine?
+// TODO: potentially implement a separate set of functions which don't fire off new goroutines to accompany RateLimit and RateLimitContext
+// TODO: implement public, non-struct Wrap() and WrapContext() functions, with the understanding that they won't be able to modify the underlying RateLimiter.
+
 const (
 	rateLimitCtxKey string = "edforceone"
 	rateLimitCtxVal string = "rateLimit42"
